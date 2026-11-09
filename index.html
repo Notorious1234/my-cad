@@ -30,7 +30,6 @@ main{flex:1;display:flex;flex-direction:column;min-height:0;background:#e0e0e0}
   </div>
 </div>
 
-<!-- لود کردن Three.js از CDN -->
 <script type="importmap">
 {
   "imports": {
@@ -41,9 +40,6 @@ main{flex:1;display:flex;flex-direction:column;min-height:0;background:#e0e0e0}
 </script>
 
 <script type="module">
-// ==========================================
-// تنظیمات اولیه
-// ==========================================
 const PX_TO_MM = 0.5;
 let state = { entities: [], mode: 'circle', preview: null, start: null };
 let oc = null; 
@@ -63,11 +59,8 @@ function showStatus(msg, time=3000) {
   if(time) setTimeout(()=>s.style.display='none', time);
 }
 
-// ==========================================
-// ۱. ساخت رابط کاربری
-// ==========================================
 function buildUI(){
-  loading.remove(); // حذف صفحه لودینگ
+  loading.remove();
   app.innerHTML = `
     <header>
       <button data-tool="circle" class="active">دایره</button>
@@ -84,7 +77,6 @@ function buildUI(){
     <div id="status"></div>
   `;
 
-  // رویدادهای دکمه‌ها
   document.querySelectorAll('[data-tool]').forEach(b=>{
     b.onclick = ()=>{
       state.mode = b.dataset.tool;
@@ -100,9 +92,6 @@ function buildUI(){
   setupSketch();
 }
 
-// ==========================================
-// ۲. محیط اسکچ (کشیدن شکل)
-// ==========================================
 function setupSketch(){
   const c = document.getElementById('sketch');
   
@@ -166,12 +155,8 @@ function getEntitiesMM(){
   });
 }
 
-// ==========================================
-// ۳. بارگذاری هسته OpenCascade (با درصد پیشرفت)
-// ==========================================
 async function loadOCC(){
   try {
-    // لود کردن فایل اصلی
     const response = await fetch('https://cdn.jsdelivr.net/npm/opencascade.js@1.1.1/dist/opencascade.full.js');
     if (!response.ok) throw new Error('Network error');
     
@@ -179,7 +164,6 @@ async function loadOCC(){
     const total = parseInt(contentLength, 10);
     let loaded = 0;
     
-    // شبیه‌سازی نوار پیشرفت
     const reader = response.body.getReader();
     const chunks = [];
     while(true) {
@@ -197,13 +181,11 @@ async function loadOCC(){
     const blob = new Blob(chunks);
     const url = URL.createObjectURL(blob);
     
-    // ایمپورت داینامیک
     const module = await import(url);
     const init = module.default;
     
     progText.textContent = 'راه‌اندازی...';
     oc = await init();
-    
     progText.textContent = 'آماده!';
   } catch (err) {
     progText.textContent = 'خطا در دانلود! اینترنت را چک کنید.';
@@ -211,9 +193,6 @@ async function loadOCC(){
   }
 }
 
-// ==========================================
-// ۴. راه‌اندازی Three.js (نمایش ۳بعدی)
-// ==========================================
 async function initViewer(){
   const THREE = await import('three');
   const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
@@ -252,7 +231,6 @@ async function initViewer(){
     showShape(shape){
       if(currentMesh) scene.remove(currentMesh);
       
-      // تبدیل B-Rep به مش قابل نمایش
       new oc.BRepMesh_IncrementalMesh_2(shape, 0.2, false, 0.3, true);
       const positions = [], indices = [];
       let offset = 0;
@@ -296,7 +274,7 @@ async function initViewer(){
 }
 
 // ==========================================
-// ۵. عملیات اکسترود
+// اصلاح اصلی اینجاست (توابع ساخت مستطیل)
 // ==========================================
 function doExtrude(){
   if(!isReady) { alert('هنوز سیستم آماده نیست، چند ثانیه صبر کنید.'); return; }
@@ -305,27 +283,32 @@ function doExtrude(){
   const depth = parseFloat(document.getElementById('depth').value) || 20;
   
   try {
-    const solids = [];
+    const shapesToShow = [];
+    
     for(const e of getEntitiesMM()){
       if(e.type === 'circle'){
         const ax = new oc.gp_Ax2_3(new oc.gp_Pnt_3(e.cx, e.cy, 0), new oc.gp_Dir_4(0,0,1));
-        solids.push(new oc.BRepPrimAPI_MakeCylinder_2(ax, e.r, depth).Shape());
+        shapesToShow.push(new oc.BRepPrimAPI_MakeCylinder_2(ax, e.r, depth).Shape());
       } else if(e.type === 'rect'){
+        // اصلاح توابع با نسخه جدید OpenCascade
         const poly = new oc.BRepBuilderAPI_MakePolygon_1();
         const pts = [[e.x,e.y],[e.x+e.w,e.y],[e.x+e.w,e.y+e.h],[e.x,e.y+e.h]];
-        for(const [x,y] of pts) poly.Add_1(new oc.gp_Pnt_3(x,y,0));
+        
+        for(const [x,y] of pts) {
+          poly.Add(new oc.gp_Pnt_3(x,y,0));
+        }
         poly.Close();
-        const face = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
-        solids.push(new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(0,0,depth), true, true).Shape());
+        
+        const wire = poly.Wire();
+        const face = new oc.BRepBuilderAPI_MakeFace_15(wire, true).Face();
+        const prism = new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(0,0,depth));
+        shapesToShow.push(prism.Shape());
       }
     }
     
-    if(solids.length > 0){
-      let fused = solids[0];
-      for(let i=1; i<solids.length; i++){
-        fused = new oc.BRepAlgoAPI_Fuse_3(fused, solids[i]).Shape();
-      }
-      viewer.showShape(fused);
+    if(shapesToShow.length > 0){
+      // برای اینکه شکل‌ها روی هم نیفتند، همه را یکجا نمایش می‌دهیم
+      viewer.showMultiShapes(shapesToShow);
       showStatus('اکسترود با موفقیت انجام شد!');
     }
   } catch(err) {
@@ -334,9 +317,6 @@ function doExtrude(){
   }
 }
 
-// ==========================================
-// ۶. خروجی DXF
-// ==========================================
 async function doExport(){
   if(!state.entities.length){ alert('اول یک شکل بکشید'); return; }
   try {
@@ -368,9 +348,6 @@ async function doExport(){
   }
 }
 
-// ==========================================
-// شروع برنامه
-// ==========================================
 async function start(){
   try {
     await loadOCC();
